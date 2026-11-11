@@ -369,9 +369,8 @@ const LAYOUTS = {
       ['g0', 'g1', 'g2', 'g3', 'g4', 'acc', 'dim', 'ink'].flatMap(c => [['███', c], [' ', '']]),
     ]
     const out = [prompt(s, C, 'fetch').map(([t, c]) => [t, c.replace(' cursor', '')]), []]
-    // torus frames are drawn by svg() into the blank left area
-    info.forEach(l => out.push([[' '.repeat(46), ''], ...l]))
-    while (out.length < 19) out.push([])
+    // the IMMUNE/FOMO emblem is drawn by svg() into the blank left area
+    info.forEach(l => out.push([[' '.repeat(38), ''], ...l]))
     const rule = (title, w) => [['── ', 'faint'], [title, 'acc'], [' ' + '─'.repeat(Math.max(0, w - [...title].length - 4)), 'faint']]
     out.push(...flow(cfg.sections,
       id => { const [t, l] = BLOCKS[id](s, C - 2); return [[], rule(t, C), [], ...l] },
@@ -381,7 +380,7 @@ const LAYOUTS = {
         return [[], ...Array.from({ length: Math.max(cx.length, cy.length) }, (_, i) => [...padLine(cx[i] || [], H + 4), ...(cy[i] || [])])]
       }))
     out.push([], prompt(s, C))
-    return { cols: C, lines: out, emblem: { col: 1, row: 2, w: 42, h: 17 } }
+    return { cols: C, lines: out, emblem: { col: 2, row: 2, scale: 0.6, rows: info.length } }
   },
 
   receipt(s, cfg) {
@@ -415,24 +414,6 @@ const LAYOUTS = {
   },
 }
 
-// shaded torus, depth-buffered; returns per-cell tone (-1 = empty)
-function torus(w, h, A = 1.1, B = 0.45) {
-  const lum = Array.from({ length: h }, () => Array(w).fill(-1)), zb = Array.from({ length: h }, () => Array(w).fill(0))
-  const K2 = 5, K1 = (w * K2 * 3) / (8 * 3) / 1.15
-  const [cA, sA, cB, sB] = [Math.cos(A), Math.sin(A), Math.cos(B), Math.sin(B)]
-  for (let th = 0; th < 6.283; th += 0.05) for (let ph = 0; ph < 6.283; ph += 0.015) {
-    const [ct, st, cp, sp] = [Math.cos(th), Math.sin(th), Math.cos(ph), Math.sin(ph)]
-    const cx = 2 + ct, cy = st
-    const x = cx * (cB * cp + sA * sB * sp) - cy * cA * sB
-    const y = cx * (sB * cp - sA * cB * sp) + cy * cA * cB
-    const ooz = 1 / (K2 + cA * cx * sp + cy * sA)
-    const px = Math.floor(w / 2 + K1 * ooz * x), py = Math.floor(h / 2 - K1 * ooz * y * (CW / LH))
-    const L = cp * ct * sB - cA * ct * sp - sA * st + cB * (cA * st - ct * sA * sp)
-    if (py >= 0 && py < h && px >= 0 && px < w && ooz > zb[py][px]) { zb[py][px] = ooz; lum[py][px] = Math.max(0.02, L / 1.42) }
-  }
-  return lum
-}
-
 const mix = (a, b, t) => '#' + [1, 3, 5].map(i => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - t) + parseInt(b.slice(i, i + 2), 16) * t).toString(16).padStart(2, '0')).join('')
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
@@ -461,19 +442,35 @@ function svg({ cols, lines, banner, emblem }, c) {
       px += `<rect x="${x.toFixed(1)}" y="${top}" width="${w}" height="${LH}"/>`
     }
   })
-  // emblem: N pre-rendered frames of a spinning torus, CSS shows one at a time; loops because A and B both turn 2π
-  const N = 36, T = 3
-  let spin = ''
-  if (emblem) for (let i = 0; i < N; i++) {
-    const a = (2 * Math.PI * i) / N, lum = torus(emblem.w, emblem.h, 1.1 + a, 0.45 + a)
-    let rows = ''
-    lum.forEach((r, y) => {
-      for (const [cls, lo, hi] of [['g2', 0, 0.45], ['g4', 0.45, 2]]) {
-        const str = r.map(l => (l >= lo && l < hi ? RAMP[Math.min(8, Math.floor(l * 9))] : ' ')).join('')
-        if (str.trim()) rows += `<text class="${cls}" x="${PAD + emblem.col * CW}" y="${PAD + (emblem.row + y) * LH + 12}" xml:space="preserve">${str.trimEnd()}</text>`
-      }
-    })
-    spin += `<g class="f${i ? '' : ' f0'}" style="animation-delay:${((i * T) / N).toFixed(3)}s">${rows}</g>
+  // emblem: IMMUNE over FOMO in the pixel font, a vertical density fade, and a bright copy revealed by a sliding mask
+  let shine = ''
+  if (emblem) {
+    const word = w => FONT.I.map((_, y) => [...w].map(ch => FONT[ch][y]).join(' '))
+    const top = word('IMMUNE'), bot = word('FOMO'), off = (top[0].length - bot[0].length) >> 1
+    const grid = [...top, '', ...bot.map(r => ' '.repeat(off) + r)].map(r => r.padEnd(top[0].length + 1))
+    const at = (x, y) => grid[y]?.[x] === '#'
+    const tint = ['g4', 'g4', 'g3', 'g3', 'g2', 'g2']
+    // every glyph pinned to its column; 13.4px makes a block glyph tall enough to tile rows without gaps
+    const row = (y, cls, str) => {
+      let spans = ''
+      for (const m of str.matchAll(/\S+/g)) spans += `<tspan x="${[...m[0]].map((_, i) => +((m.index + i) * CW).toFixed(1)).join(' ')}">${m[0]}</tspan>`
+      return spans && `<text class="${cls} em" y="${y * LH + 12.5}">${spans}</text>`
+    }
+    let base = '', hi = ''
+    for (let y = 0; y <= grid.length; y++) {
+      base += row(y, 'faint', [...grid[0]].map((_, x) => (!at(x, y) && at(x - 1, y - 1) ? '░' : ' ')).join(''))
+      if (y === grid.length) break
+      base += row(y, tint[y % 7], [...grid[y]].map(ch => (ch === '#' ? '▓' : ' ')).join(''))
+      hi += row(y, 'acc', [...grid[y]].map(ch => (ch === '#' ? '█' : ' ')).join(''))
+    }
+    const x0 = 0, y0 = 0, ew = grid[0].length * CW, eh = (grid.length + 1) * LH, bw = 160
+    // drawn at full size in local units, then scaled down and centered against the info column
+    const k = emblem.scale, X = PAD + emblem.col * CW, Y = PAD + emblem.row * LH + (emblem.rows * LH - eh * k) / 2
+    shine = `<defs><linearGradient id="band" x1="0" y1="0" x2="1" y2="0.3"><stop offset="0" stop-color="#000"/><stop offset=".5" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient>
+<mask id="sweep" maskUnits="userSpaceOnUse" x="${x0}" y="${y0}" width="${ew}" height="${eh}"><rect class="shine" x="${x0 - bw}" y="${y0}" width="${bw}" height="${eh}" fill="url(#band)"/></mask></defs>
+<g transform="translate(${X},${Y}) scale(${k})"><g>${base}</g><g mask="url(#sweep)">${hi}</g></g>
+`
+    shine += `<style>.em{font-size:13.4px}.shine{animation:shine 5s ease-in-out 1s infinite}@keyframes shine{from{transform:translateX(0)}65%,to{transform:translateX(${(ew + bw).toFixed(0)}px)}}</style>
 `
   }
   const sweep = Array.from({ length: 53 }, (_, x) => `.w${x}{animation-delay:${600 + x * 18}ms}`).join('')
@@ -484,14 +481,13 @@ tspan[class*=" w"]{animation:cell .4s ease-out both}
 .ink{fill:${c.ink}}.dim{fill:${c.dim}}.faint{fill:${c.faint}}.acc{fill:${c.acc}}${g.map((v, i) => `.g${i}{fill:${v}}`).join('')}${sweep}
 .banner{animation:in .8s ease-out both}
 .cursor{animation:blink 1.1s steps(1) infinite}
-.f{opacity:0;animation:frame ${T}s steps(1,end) infinite}.f0{opacity:1}@keyframes frame{0%{opacity:1}${(100 / N).toFixed(3)}%{opacity:0}100%{opacity:0}}
 @keyframes in{from{opacity:0}}@keyframes cell{from{fill-opacity:0}}@keyframes blink{50%{opacity:0}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
 <rect width="100%" height="100%" rx="10" fill="${c.bg}"/>
 ${banner ? `<defs><linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="0" y1="${PAD}" x2="0" y2="${PAD + BANNER.length * LH}"><stop offset="0" stop-color="${c.ink}"/><stop offset="1" stop-color="${c.acc}"/></linearGradient></defs>
 <g class="banner" shape-rendering="crispEdges"><g fill="${c.faint}">${sh}</g><g fill="url(#fade)">${px}</g></g>` : ''}
-${spin}${body}
+${shine}${body}
 </svg>
 `
 }
@@ -587,7 +583,7 @@ function ui() {
 let url
 function draw() {
   if (url) URL.revokeObjectURL(url)
-  // no fade-in here: it would replay on every color tweak; the torus keeps spinning
+  // no fade-in here: it would replay on every color tweak; the shine keeps moving
   url = URL.createObjectURL(new Blob([renderSVG(DATA, cfg, theme).replace('</style>', 'text,tspan,.banner{animation:none!important}</style>')], { type: 'image/svg+xml' }))
   $('out').src = url
   $('stage').style.background = theme === 'dark' ? '#0d1117' : '#ffffff'
