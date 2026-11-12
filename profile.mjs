@@ -34,6 +34,7 @@ const FONT = {
   E: ['#######', '##     ', '#####  ', '##     ', '##     ', '#######'],
   F: ['#######', '##     ', '#####  ', '##     ', '##     ', '##     '],
   O: [' ###### ', '##    ##', '##    ##', '##    ##', '##    ##', ' ###### '],
+  '.': ['  ', '  ', '  ', '  ', '  ', '##'],
 }
 const BANNER = FONT.I.map((_, y) => [...'IMMUNEFOMO'].map(c => FONT[c][y]).join(' '))
 
@@ -369,8 +370,9 @@ const LAYOUTS = {
       ['g0', 'g1', 'g2', 'g3', 'g4', 'acc', 'dim', 'ink'].flatMap(c => [['███', c], [' ', '']]),
     ]
     const out = [prompt(s, C, 'fetch').map(([t, c]) => [t, c.replace(' cursor', '')]), []]
-    // the IMMUNE/FOMO emblem is drawn by svg() into the blank left area
-    info.forEach(l => out.push([[' '.repeat(38), ''], ...l]))
+    // the FOMO.MOE emblem is drawn by svg() into the blank left area
+    const EW = 46
+    info.forEach(l => out.push([[' '.repeat(EW), ''], ...l]))
     const rule = (title, w) => [['── ', 'faint'], [title, 'acc'], [' ' + '─'.repeat(Math.max(0, w - [...title].length - 4)), 'faint']]
     out.push(...flow(cfg.sections,
       id => { const [t, l] = BLOCKS[id](s, C - 2); return [[], rule(t, C), [], ...l] },
@@ -380,7 +382,7 @@ const LAYOUTS = {
         return [[], ...Array.from({ length: Math.max(cx.length, cy.length) }, (_, i) => [...padLine(cx[i] || [], H + 4), ...(cy[i] || [])])]
       }))
     out.push([], prompt(s, C))
-    return { cols: C, lines: out, emblem: { col: 2, row: 2, scale: 0.6, rows: info.length } }
+    return { cols: C, lines: out, emblem: { cols: EW, row: 2, rows: info.length } }
   },
 
   receipt(s, cfg) {
@@ -442,35 +444,40 @@ function svg({ cols, lines, banner, emblem }, c) {
       px += `<rect x="${x.toFixed(1)}" y="${top}" width="${w}" height="${LH}"/>`
     }
   })
-  // emblem: IMMUNE over FOMO in the pixel font, a vertical density fade, and a bright copy revealed by a sliding mask
+  // emblem: FOMO.MOE in the pixel font over slowly turning rays, with a breathing bloom, a sliding shine and ascii sparkles
   let shine = ''
   if (emblem) {
-    const word = w => FONT.I.map((_, y) => [...w].map(ch => FONT[ch][y]).join(' '))
-    const top = word('IMMUNE'), bot = word('FOMO'), off = (top[0].length - bot[0].length) >> 1
-    const grid = [...top, '', ...bot.map(r => ' '.repeat(off) + r)].map(r => r.padEnd(top[0].length + 1))
-    const at = (x, y) => grid[y]?.[x] === '#'
-    const tint = ['g4', 'g4', 'g3', 'g3', 'g2', 'g2']
-    // every glyph pinned to its column; 13.4px makes a block glyph tall enough to tile rows without gaps
-    const row = (y, cls, str) => {
-      let spans = ''
-      for (const m of str.matchAll(/\S+/g)) spans += `<tspan x="${[...m[0]].map((_, i) => +((m.index + i) * CW).toFixed(1)).join(' ')}">${m[0]}</tspan>`
-      return spans && `<text class="${cls} em" y="${y * LH + 12.5}">${spans}</text>`
+    const n = v => +v.toFixed(1)
+    const word = FONT.F.map((_, y) => [...'FOMO.MOE'].map(ch => FONT[ch][y]).join(' '))
+    const d = word.map((r, y) => [...r.matchAll(/#+/g)].map(m => `M${n(m.index * CW)} ${y * LH}h${n(m[0].length * CW)}v${LH}h-${n(m[0].length * CW)}z`).join('')).join('')
+    const k = 0.6, ew = word[0].length * CW, eh = word.length * LH, bw = 160
+    // centered in the blank area, nudged left off the info column
+    const cx = n(PAD + (emblem.cols * CW) / 2 - 6), cy = PAD + (emblem.row + emblem.rows / 2) * LH
+    // a full-strength glow on white reads as a smudge, so light themes get a fainter one
+    const dark = parseInt(c.bg.slice(1, 3), 16) < 128, ray = dark ? 0.32 : 0.14, bloom = dark ? 0.55 : 0.3
+    let rays = ''
+    for (let i = 0; i < 20; i++) {
+      const at = t => `${n(cx + 190 * Math.cos((i * Math.PI) / 10 + t))} ${n(cy + 190 * Math.sin((i * Math.PI) / 10 + t))}`
+      rays += `M${cx} ${cy}L${at(-0.05)}L${at(0.05)}Z`
     }
-    let base = '', hi = ''
-    for (let y = 0; y <= grid.length; y++) {
-      base += row(y, 'faint', [...grid[0]].map((_, x) => (!at(x, y) && at(x - 1, y - 1) ? '░' : ' ')).join(''))
-      if (y === grid.length) break
-      base += row(y, tint[y % 7], [...grid[y]].map(ch => (ch === '#' ? '▓' : ' ')).join(''))
-      hi += row(y, 'acc', [...grid[y]].map(ch => (ch === '#' ? '█' : ' ')).join(''))
-    }
-    const x0 = 0, y0 = 0, ew = grid[0].length * CW, eh = (grid.length + 1) * LH, bw = 160
-    // drawn at full size in local units, then scaled down and centered against the info column
-    const k = emblem.scale, X = PAD + emblem.col * CW, Y = PAD + emblem.row * LH + (emblem.rows * LH - eh * k) / 2
-    shine = `<defs><linearGradient id="band" x1="0" y1="0" x2="1" y2="0.3"><stop offset="0" stop-color="#000"/><stop offset=".5" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient>
-<mask id="sweep" maskUnits="userSpaceOnUse" x="${x0}" y="${y0}" width="${ew}" height="${eh}"><rect class="shine" x="${x0 - bw}" y="${y0}" width="${bw}" height="${eh}" fill="url(#band)"/></mask></defs>
-<g transform="translate(${X},${Y}) scale(${k})"><g>${base}</g><g mask="url(#sweep)">${hi}</g></g>
-`
-    shine += `<style>.em{font-size:13.4px}.shine{animation:shine 5s ease-in-out 1s infinite}@keyframes shine{from{transform:translateX(0)}65%,to{transform:translateX(${(ew + bw).toFixed(0)}px)}}</style>
+    const sparks = [[-136, -46], [-26, -58], [86, -54], [156, -24], [-154, 18], [-76, 58], [38, 62], [142, 48]].map(([x, y], i) =>
+      `<text class="sp" x="${n(cx + x)}" y="${cy + y + 5}" text-anchor="middle" style="animation-delay:${(i * 0.41).toFixed(2)}s">${'+*·+*+·*'[i]}</text>`).join('')
+    shine = `<defs><linearGradient id="emg" gradientUnits="userSpaceOnUse" x2="0" y2="${eh}"><stop offset="0" stop-color="${c.acc}"/><stop offset="1" stop-color="${c.dim}"/></linearGradient>
+<filter id="bloom" x="-20%" y="-80%" width="140%" height="260%"><feGaussianBlur stdDeviation="8"/></filter>
+<radialGradient id="halo"><stop offset="0" stop-color="${c.acc}" stop-opacity=".22"/><stop offset="1" stop-color="${c.acc}" stop-opacity="0"/></radialGradient>
+<radialGradient id="fadeR"><stop offset=".08" stop-color="#fff"/><stop offset="1" stop-color="#000"/></radialGradient>
+<mask id="rayfade" maskUnits="userSpaceOnUse" x="${n(cx - 175)}" y="${cy - 110}" width="350" height="220"><rect x="${n(cx - 175)}" y="${cy - 110}" width="350" height="220" fill="url(#fadeR)"/></mask>
+<linearGradient id="band" x1="0" y1="0" x2="1" y2="0.3"><stop offset="0" stop-color="#000"/><stop offset=".5" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient>
+<mask id="sweep" maskUnits="userSpaceOnUse" x="0" y="-20" width="${n(ew)}" height="${eh + 40}"><rect class="shine" x="-${bw}" y="-20" width="${bw}" height="${eh + 40}" fill="url(#band)"/></mask>
+<path id="em" d="${d}"/></defs>
+<g mask="url(#rayfade)"><path class="rays" fill="${c.acc}" d="${rays}"/></g>
+<ellipse class="glow" cx="${cx}" cy="${cy}" rx="190" ry="70" fill="url(#halo)"/>
+<g transform="translate(${n(cx - (ew * k) / 2)},${n(cy - (eh * k) / 2)}) scale(${k})"><use class="glow" href="#em" fill="${c.acc}" filter="url(#bloom)"/><use href="#em" fill="url(#emg)"/><use href="#em" fill="${c.acc}" mask="url(#sweep)"/></g>
+${sparks}
+<style>.glow{opacity:${bloom / 2};animation:glow 3s ease-in-out infinite alternate}@keyframes glow{from{opacity:.1}to{opacity:${bloom}}}
+.rays{opacity:${ray};transform-origin:${cx}px ${cy}px;animation:spin 40s linear infinite,pulse 3s ease-in-out infinite alternate}@keyframes spin{to{transform:rotate(360deg)}}@keyframes pulse{from{opacity:${ray / 2}}}
+.sp{font:16px monospace;fill:${c.acc};transform-box:fill-box;transform-origin:center;animation:tw 2.8s ease-in-out infinite both}@keyframes tw{0%,100%{transform:scale(0) rotate(0);opacity:0}50%{transform:scale(1) rotate(90deg);opacity:1}}
+.shine{animation:shine 4.5s ease-in-out 1s infinite}@keyframes shine{from{transform:translateX(0)}60%,to{transform:translateX(${n(ew + bw)}px)}}</style>
 `
   }
   const sweep = Array.from({ length: 53 }, (_, x) => `.w${x}{animation-delay:${600 + x * 18}ms}`).join('')
